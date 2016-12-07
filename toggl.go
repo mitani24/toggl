@@ -15,6 +15,8 @@ type User struct {
 	Duration int `json:"duration"`
 }
 
+// Activities do not have id and do not include time_entry_id also.
+// So identify activities by (user_id, description)
 type Activity struct {
 	UserId      int    `json:"user_id"`
 	ProjectId   int    `json:"project_id"`
@@ -24,67 +26,29 @@ type Activity struct {
 	TId         int    `json:"tid"`
 }
 
-func (a *Activity) hasJustStarted(interval int64) bool {
-	return time.Now().Unix()+a.Duration < interval
+func (a *Activity) hasJustStarted(runningActivities map[int]string, interval int64) bool {
+	d, didRun := runningActivities[a.UserId]
+	return ((!didRun || d != a.Description) &&
+		time.Now().Unix()+a.Duration < int64(1.5*float64(interval))) // margin to fill gap
 }
 
-func (a *Activity) hasJustFinished(interval int64) bool {
+func (a *Activity) hasJustFinished(runningActivities map[int]string) bool {
 	if a.Stop == "" {
 		return false
 	}
-	stop, err := time.Parse(time.RFC3339, a.Stop)
-	if err != nil {
-		log.Println("ERROR[hasJustFinished]: ", err)
-		return false
-	}
-	return time.Now().Unix()-stop.Unix() < interval
+	d, didRun := runningActivities[a.UserId]
+	return didRun && d == a.Description
 }
 
 type Dashboard struct {
-	MostActiveUsers []User     `json:"most_active_user"`
-	Activities      []Activity `json:"activity"`
+	client            *http.Client
+	request           *http.Request
+	runningActivities map[int]string
+	MostActiveUsers   []User     `json:"most_active_user"`
+	Activities        []Activity `json:"activity"`
 }
 
-func (d *Dashboard) startedActivities(interval int64) []Activity {
-	res := make([]Activity, 0)
-	for _, a := range d.Activities {
-		if a.hasJustStarted(interval) {
-			res = append(res, a)
-		}
-	}
-	return res
-}
-
-func (d *Dashboard) finishedActivities(interval int64) []Activity {
-	res := make([]Activity, 0)
-	for _, a := range d.Activities {
-		if a.hasJustFinished(interval) {
-			res = append(res, a)
-		}
-	}
-	return res
-}
-
-func NewHook(interval int64, id int, token string, onStart func(*Activity), onStop func(*Activity), onError func(error)) error {
-	f := func() {
-		log.Println("toggl-hook started")
-		dashboard, err := fetchDashboard(id, token)
-		if err != nil {
-			onError(err)
-		}
-		for _, a := range dashboard.finishedActivities(interval) {
-			onStop(&a)
-		}
-		for _, a := range dashboard.startedActivities(interval) {
-			onStart(&a)
-		}
-		log.Println("toggl-hook finished")
-	}
-	_, err := scheduler.Every(int(interval)).Seconds().Run(f)
-	return err
-}
-
-func fetchDashboard(id int, token string) (*Dashboard, error) {
+func NewDashboard(id int, token string) (*Dashboard, error) {
 	c := &http.Client{}
 	url := fmt.Sprintf("https://www.toggl.com/api/v8/dashboard/%d", id)
 	req, err := http.NewRequest("GET", url, nil)
@@ -93,11 +57,15 @@ func fetchDashboard(id int, token string) (*Dashboard, error) {
 	}
 	req.SetBasicAuth(token, "api_token")
 
-	log.Printf("%v %v %v\n", req.Proto, req.Method, req.URL)
+	return &Dashboard{client: c, request: req}, nil
+}
 
-	resp, err := c.Do(req)
+func (d *Dashboard) fetch() error {
+	log.Printf("%v %v %v\n", d.request.Proto, d.request.Method, d.request.URL)
+
+	resp, err := d.client.Do(d.request)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer resp.Body.Close()
 
@@ -105,13 +73,60 @@ func fetchDashboard(id int, token string) (*Dashboard, error) {
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	d := &Dashboard{}
 	err = json.Unmarshal(body, d)
+	log.Println(d)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return d, nil
+	return nil
+}
+
+func (d *Dashboard) startedActivities(interval int64) []Activity {
+	res := make([]Activity, 0)
+	for _, a := range d.Activities {
+		if a.hasJustStarted(d.runningActivities, interval) {
+			d.runningActivities[a.UserId] = a.Description
+			res = append(res, a)
+		}
+	}
+	return res
+}
+
+func (d *Dashboard) finishedActivities() []Activity {
+	res := make([]Activity, 0)
+	for _, a := range d.Activities {
+		if a.hasJustFinished(d.runningActivities) {
+			delete(d.runningActivities, a.UserId)
+			res = append(res, a)
+		}
+	}
+	return res
+}
+
+func NewHook(interval int64, id int, token string, onStart func(*Activity), onStop func(*Activity), onError func(error)) error {
+	// There is no endpoint to get workspace wide time entries other than /dashboard/:id
+	dashboard, err := NewDashboard(id, token)
+	if err != nil {
+		return err
+	}
+
+	f := func() {
+		log.Println("toggl-hook started")
+		err = dashboard.fetch()
+		if err != nil {
+			onError(err)
+		}
+		for _, a := range dashboard.finishedActivities() {
+			onStop(&a)
+		}
+		for _, a := range dashboard.startedActivities(interval) {
+			onStart(&a)
+		}
+		log.Println("toggl-hook finished")
+	}
+	_, err = scheduler.Every(int(interval)).Seconds().Run(f)
+	return err
 }
