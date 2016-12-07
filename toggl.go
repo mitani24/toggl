@@ -77,7 +77,6 @@ func (d *Dashboard) fetch() error {
 	}
 
 	err = json.Unmarshal(body, d)
-	log.Println(d)
 	if err != nil {
 		return err
 	}
