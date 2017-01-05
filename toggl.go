@@ -57,7 +57,7 @@ func NewDashboard(id int, token string) (*Dashboard, error) {
 	}
 	req.SetBasicAuth(token, "api_token")
 
-	return &Dashboard{client: c, request: req}, nil
+	return &Dashboard{client: c, request: req, runningActivities: make(map[int]string)}, nil
 }
 
 func (d *Dashboard) fetch() error {
