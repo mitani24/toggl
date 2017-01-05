@@ -76,6 +76,7 @@ func (d *Dashboard) fetch() error {
 		return err
 	}
 
+	d.Activities = nil
 	err = json.Unmarshal(body, d)
 	if err != nil {
 		return err
