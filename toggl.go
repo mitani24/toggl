@@ -81,12 +81,27 @@ func (d *Dashboard) fetch() error {
 	if err != nil {
 		return err
 	}
+
 	return nil
+}
+
+func (d *Dashboard) latestActivities() []Activity {
+	res := make([]Activity, 0)
+	checked := map[int]bool{}
+	for _, a := range d.Activities {
+		if checked[a.UserId] {
+			continue
+		} else {
+			res = append(res, a)
+			checked[a.UserId] = true
+		}
+	}
+	return res
 }
 
 func (d *Dashboard) startedActivities(interval int64) []Activity {
 	res := make([]Activity, 0)
-	for _, a := range d.Activities {
+	for _, a := range d.latestActivities() {
 		if a.hasJustStarted(d.runningActivities, interval) {
 			d.runningActivities[a.UserId] = a.Description
 			res = append(res, a)
@@ -97,7 +112,7 @@ func (d *Dashboard) startedActivities(interval int64) []Activity {
 
 func (d *Dashboard) finishedActivities() []Activity {
 	res := make([]Activity, 0)
-	for _, a := range d.Activities {
+	for _, a := range d.latestActivities() {
 		if a.hasJustFinished(d.runningActivities) {
 			delete(d.runningActivities, a.UserId)
 			res = append(res, a)
