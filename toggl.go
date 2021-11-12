@@ -3,11 +3,12 @@ package toggl
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/carlescere/scheduler"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/carlescere/scheduler"
 )
 
 type User struct {
@@ -50,7 +51,7 @@ type Dashboard struct {
 
 func NewDashboard(id int, token string) (*Dashboard, error) {
 	c := &http.Client{}
-	url := fmt.Sprintf("https://www.toggl.com/api/v8/dashboard/%d", id)
+	url := fmt.Sprintf("https://api.track.toggl.com/api/v8/dashboard/%d", id)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
